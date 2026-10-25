@@ -18,7 +18,7 @@ infrastucture/
 ├── .gitignore              # Git ignore rules
 ├── migrations/             # (opsional) SQL migration files
 ├── seed/                   # (opsional) Seed data
-└── spec/                   # API specifications (arsip — kontrak resmi di /contracts)
+└── spec/                   # API specifications (arsip — kontrak resmi di ../backend/contracts)
 ```
 
 ## Services
