@@ -1,0 +1,279 @@
+openapi: 3.0.3
+info:
+  title: TickId Microservices API Specification
+  description: High-throughput event ticketing platform REST API documentation.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8081
+    description: User & Auth Service
+  - url: http://localhost:8082
+    description: Catalog Service
+  - url: http://localhost:8083
+    description: Booking Service
+  - url: http://localhost:8084
+    description: Payment Service
+  - url: http://localhost:8085
+    description: Notification Service
+
+paths:
+  # -------------------------------------------------------------
+  # User & Auth Service
+  # -------------------------------------------------------------
+  /api/v1/auth/register:
+    post:
+      summary: Register a new user
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, first_name, last_name, phone]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                first_name: { type: string }
+                last_name: { type: string }
+                phone: { type: string }
+      responses:
+        '201':
+          description: User registered successfully
+        '400':
+          description: Validation error
+
+  /api/v1/auth/login:
+    post:
+      summary: Authenticate and obtain JWT token pair
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Login successful, returns access & refresh tokens
+        '401':
+          description: Invalid credentials
+
+  /api/v1/users/me:
+    get:
+      summary: Get current authenticated user profile
+      tags: [User]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile payload
+
+  # -------------------------------------------------------------
+  # Catalog Service
+  # -------------------------------------------------------------
+  /api/v1/events:
+    get:
+      summary: Search and browse events
+      tags: [Catalog]
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: List of paginated events
+    post:
+      summary: Create a new event
+      tags: [Catalog]
+      security:
+        - BearerAuth: []
+      responses:
+        '201':
+          description: Event created
+
+  /api/v1/events/{id}:
+    get:
+      summary: Get event details by ID
+      tags: [Catalog]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Detailed event information
+
+  # -------------------------------------------------------------
+  # Booking Service
+  # -------------------------------------------------------------
+  /api/v1/reservations:
+    post:
+      summary: Atomic seat reservation and distributed Redis lock
+      tags: [Booking]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, eventId, seats]
+              properties:
+                userId: { type: string, format: uuid }
+                eventId: { type: string, format: uuid }
+                currency: { type: string, default: IDR }
+                seats:
+                  type: array
+                  items:
+                    type: object
+                    required: [seatId, section, row, number, price]
+                    properties:
+                      seatId: { type: string, format: uuid }
+                      section: { type: string }
+                      row: { type: string }
+                      number: { type: string }
+                      price: { type: number }
+      responses:
+        '201':
+          description: Seats successfully locked for 5 minutes
+        '409':
+          description: Conflict - one or more seats already locked/sold
+
+  /api/v1/reservations/{id}:
+    get:
+      summary: Get reservation details
+      tags: [Booking]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Reservation details
+
+  /api/v1/reservations/{id}/confirm:
+    post:
+      summary: Confirm a locked reservation after payment
+      tags: [Booking]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Reservation confirmed
+
+  /api/v1/reservations/{id}/cancel:
+    post:
+      summary: Cancel reservation and release locks
+      tags: [Booking]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Reservation cancelled
+
+  # -------------------------------------------------------------
+  # Payment Service
+  # -------------------------------------------------------------
+  /api/v1/payments:
+    post:
+      summary: Create QRIS payment transaction for a locked reservation
+      tags: [Payment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservation_id, payment_method]
+              properties:
+                reservation_id: { type: string, format: uuid }
+                payment_method: { type: string, enum: [QRIS, qris] }
+      responses:
+        '201':
+          description: Payment transaction created with QR string & NMID
+
+  /api/v1/payments/{id}:
+    get:
+      summary: Query payment status and QR details
+      tags: [Payment]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Payment record details
+
+  /api/v1/payments/{id}/confirm:
+    post:
+      summary: Confirm payment, finalize booking reservation, and queue ticket delivery
+      tags: [Payment]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Payment confirmed and e-ticket queued
+
+  # -------------------------------------------------------------
+  # Notification Service
+  # -------------------------------------------------------------
+  /api/v1/notifications/ticket-confirmation:
+    post:
+      summary: Generate PDF e-ticket with QR/Barcode and queue confirmation email
+      tags: [Notification]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [booking_ref, customer_email, customer_name, event_id, event_title, event_date, venue_name, tier_name, total_amount, seats]
+              properties:
+                booking_ref: { type: string }
+                customer_email: { type: string, format: email }
+                customer_name: { type: string }
+                event_id: { type: string }
+                event_title: { type: string }
+                event_date: { type: string }
+                venue_name: { type: string }
+                tier_name: { type: string }
+                total_amount: { type: number }
+                currency: { type: string }
+                seats:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      seat_id: { type: string }
+                      section: { type: string }
+                      row: { type: string }
+                      number: { type: string }
+                      price: { type: number }
+      responses:
+        '202':
+          description: Notification job accepted and queued
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
